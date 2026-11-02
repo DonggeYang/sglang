@@ -41,21 +41,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _v2_backend(attn_backend: AttentionBackend):
-    from sglang.srt.layers.attention.unlimited_ocr_v2_backend import (
-        UnlimitedOCRV2AttnBackend,
-    )
-
-    if isinstance(attn_backend, UnlimitedOCRV2AttnBackend):
-        return attn_backend
-    logger.warning(
-        "[Unlimited-OCR v2] attention backend %s cannot run document KV reuse; "
-        "every window recomputes",
-        type(attn_backend).__name__,
-    )
-    return None
-
-
 class UocrSchedulerRuntime:
     """Route scheduler events to Unlimited-OCR v2 document KV reuse and prefetch.
 
@@ -75,6 +60,7 @@ class UocrSchedulerRuntime:
         decode_graph_io: Callable[[], Optional[UOCRDecodeGraphIO]],
         crop_transfer,
         enable_overlap: bool,
+        doc_reuse_cls: type[DocReuse] = DocReuse,
     ):
         self._crop_transfer = crop_transfer
         self.overlap_release = DeferredOverlapRelease() if enable_overlap else None
@@ -84,8 +70,8 @@ class UocrSchedulerRuntime:
             forward_stream=forward_stream,
             tp_size=tp_size,
         )
-        backend = _v2_backend(attn_backend)
-        self._reuse = DocReuse(
+        backend = doc_reuse_cls.backend_for(attn_backend)
+        self._reuse = doc_reuse_cls(
             cache=tree_cache,
             backend=backend,
             on_window_finished=self._prefetch.on_window_finished,

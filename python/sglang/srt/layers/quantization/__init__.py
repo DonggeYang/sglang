@@ -141,6 +141,7 @@ if is_mps():
     BASE_QUANTIZATION_METHODS.update(
         {
             "mlx_q4": MlxQuantizationConfig,
+            "mlx_q6": MlxQuantizationConfig,
             "mlx_q8": MlxQuantizationConfig,
         }
     )

@@ -146,6 +146,7 @@ class MlxPendingDecode:
 _MLX_QUANTIZATION_PRESETS: dict[str, tuple[int, int]] = {
     # name -> (bits, group_size). group_size=64 matches the mlx-community convention.
     "mlx_q4": (4, 64),
+    "mlx_q6": (6, 64),
     "mlx_q8": (8, 64),
 }
 _MLX_KV_FLOAT_DTYPES = {mx.float16, mx.bfloat16, mx.float32}
@@ -462,21 +463,19 @@ class MlxModelRunner:
     @staticmethod
     def _cache_arrays(cache: Any) -> list[mx.array]:
         """Return every MLX array nested under ``cache.state``."""
+        # Iterative on purpose: a self-recursive closure is a reference cycle,
+        # so the collected views (and the cache buffers behind them) would
+        # stay alive until Python's cyclic GC happens to run.
         arrays: list[mx.array] = []
-
-        def collect(value: Any) -> None:
+        stack: list[Any] = [getattr(cache, "state", ())]
+        while stack:
+            value = stack.pop()
             if isinstance(value, mx.array):
                 arrays.append(value)
-            elif value is None:
-                return
             elif isinstance(value, (list, tuple)):
-                for item in value:
-                    collect(item)
+                stack.extend(reversed(value))
             elif isinstance(value, dict):
-                for item in value.values():
-                    collect(item)
-
-        collect(getattr(cache, "state", ()))
+                stack.extend(reversed(list(value.values())))
         return arrays
 
     @staticmethod
@@ -704,6 +703,11 @@ class MlxModelRunner:
     @property
     def pool_size(self) -> int:
         return self._pool_size
+
+    def supports_native_custom_logit_processor(self, batch: Any) -> bool:
+        """Whether this runner applies ``batch``'s custom logit processors on the
+        device, so its decode steps may chain; the generic runner does not."""
+        return False
 
     def _build_aot_kernels(self) -> MlxAOTKernelSet:
         """Build model-level set of optional registered AOT kernels."""

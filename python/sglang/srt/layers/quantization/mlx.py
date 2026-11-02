@@ -7,7 +7,7 @@ path.
 
 This module serves two purposes:
 
-1. Registry registration. Listing ``mlx_q4`` and ``mlx_q8`` in
+1. Registry registration. Listing ``mlx_q4``, ``mlx_q6`` and ``mlx_q8`` in
    ``QUANTIZATION_METHODS`` lets :meth:`ModelConfig._verify_quantization`
    recognize them as known methods without backend-specific exceptions in
    the generic config code.
@@ -45,7 +45,7 @@ class MlxQuantizationConfig(QuantizationConfig):
     """
 
     _ERR = (
-        "MLX on-the-fly quantization (--quantization mlx_q4 / mlx_q8) is "
+        "MLX on-the-fly quantization (--quantization mlx_q4 / mlx_q6 / mlx_q8) is "
         "handled by the MLX backend at model-load time via mlx_lm.utils."
         "quantize_model, not by this QuantizationConfig class. If you "
         "reached this error, SGLANG_USE_MLX=1 is likely not set."
@@ -114,6 +114,8 @@ class MlxQuantizationConfig(QuantizationConfig):
             return None
         if bits == 4:
             return "mlx_q4"
+        if bits == 6:
+            return "mlx_q6"
         if bits == 8:
             return "mlx_q8"
         return None

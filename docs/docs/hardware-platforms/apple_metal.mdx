@@ -78,13 +78,13 @@ SGLANG_USE_MLX=1 python -m sglang.launch_server \
 
 The MLX backend supports two quantization paths on Apple Silicon:
 
-1. **Pre-quantized HF repos.** Any `mlx-community/<model>-4bit` (or `-8bit`) repo loads directly through `mlx_lm.load(...)` — no extra flag needed.
+1. **Pre-quantized HF repos.** Any `mlx-community/<model>-4bit` (or `-6bit`, `-8bit`) repo loads directly through `mlx_lm.load(...)` — no extra flag needed.
    ```bash
    SGLANG_USE_MLX=1 python -m sglang.launch_server \
      --model-path mlx-community/Qwen3-0.6B-4bit \
      --disable-cuda-graph
    ```
-2. **On-the-fly quantization.** For any fp16 model, pass `--quantization mlx_q4` or `--quantization mlx_q8` to have sglang quantize the weights at load time via `mlx_lm.utils.quantize_model` (group size 64, the mlx-community default). The quantized weights stay in process memory; the on-disk model is untouched.
+2. **On-the-fly quantization.** For any fp16 model, pass `--quantization mlx_q4`, `--quantization mlx_q6` or `--quantization mlx_q8` to have sglang quantize the weights at load time via `mlx_lm.utils.quantize_model` (group size 64, the mlx-community default). The quantized weights stay in process memory; the on-disk model is untouched.
    ```bash
    SGLANG_USE_MLX=1 python -m sglang.launch_server \
      --model-path Qwen/Qwen3-0.6B \
@@ -97,6 +97,23 @@ The MLX backend supports two quantization paths on Apple Silicon:
    Quantization complete in 0.13s — active mem: 1.11 GB -> 0.31 GB (71.9% reduction)
    ```
    The MLX backend silently ignores `--quantization mlx_q4` when the model is already quantized in its HF config (path 1), so the same flag is safe to pass either way.
+
+## Unlimited-OCR v2
+
+[Unlimited-OCR-2](/cookbook/autoregressive/Baidu/Unlimited-OCR-2) runs on the MLX backend with its SAM and CLIP vision encoders, DASH sparse attention and page-window processing (`--uocr-doc-split`). Pages are preprocessed and encoded on Metal in the tokenizer process. You can serve the BF16 checkpoint `baidu/Unlimited-OCR-2` or an mlx-community export `mlx-community/Unlimited-OCR-2-{4,6,8}bit`:
+
+```bash
+SGLANG_USE_MLX=1 python -m sglang.launch_server \
+  --model-path mlx-community/Unlimited-OCR-2-8bit \
+  --chat-template unlimited-ocr \
+  --uocr-doc-split \
+  --enable-streaming-session \
+  --uocr-max-page-tokens 8000
+```
+
+The built-in page guard and a request's n-gram processor (`DeepseekOCRNoRepeatNGramLogitProcessor`) run inside the MLX decode step, so decode steps keep chaining. The page guard needs no flag; requests that send the n-gram processor as `custom_logit_processor` need the server started with `--enable-custom-logit-processor`, otherwise they get a 400. OCR decodes greedily (`temperature=0`); add `--mlx-enable-sampling` only for requests that sample.
+
+Decode is bound by GPU time, so throughput stops growing at around 8 concurrent documents. On an M5 MacBook Pro with 16 GB of memory, the 8-bit model produced 191 tokens/s with 8 concurrent documents and 190 tokens/s with 12.
 
 ## Benchmarking with Requests
 

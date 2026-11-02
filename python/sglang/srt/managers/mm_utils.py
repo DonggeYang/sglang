@@ -4,6 +4,7 @@ Multi-modality utils
 
 import copy
 import hashlib
+import math
 import mmap
 import os
 import pickle
@@ -1379,7 +1380,8 @@ class ShmPointerMMData:
                 # the process is killed with SIGBUS. Reserving the pages up
                 # front turns exhaustion into a catchable OSError (ENOSPC).
                 os.posix_fallocate(shm._fd, 0, nbytes)
-            dst = torch.frombuffer(shm.buf, dtype=torch.uint8)
+            # macOS rounds the segment up to a page; read only the payload.
+            dst = torch.frombuffer(shm.buf, dtype=torch.uint8, count=nbytes)
             dst.copy_(tensor.view(torch.uint8).reshape(-1))
         except BaseException:
             shm.close()
@@ -1410,7 +1412,9 @@ class ShmPointerMMData:
         tensor = None
         try:
             handle = shared_memory.SharedMemory(name=self.shm_name)
-            tensor = torch.frombuffer(handle.buf, dtype=self.dtype)
+            tensor = torch.frombuffer(
+                handle.buf, dtype=self.dtype, count=math.prod(self.shape)
+            )
             self.tensor = tensor.reshape(self.shape)
             self._shm_handle = handle
         except Exception as error:

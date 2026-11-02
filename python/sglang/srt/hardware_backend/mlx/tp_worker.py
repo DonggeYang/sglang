@@ -19,6 +19,7 @@ from typing import Optional
 import mlx.core as mx
 import torch
 
+from sglang.srt.configs.model_config import is_unlimited_ocr_v2
 from sglang.srt.hardware_backend.mlx.model_runner import (
     MlxPendingDecode,
     MlxPendingExtend,
@@ -99,7 +100,17 @@ class MlxTpModelWorker(TpModelWorker):
         )
         if get_schedule().max_total_tokens is not None:
             init_kwargs["pool_size"] = get_schedule().max_total_tokens
-        self._mlx_runner = MlxModelRunner(**init_kwargs)
+        runner_cls = MlxModelRunner
+        if is_unlimited_ocr_v2(self.model_config.hf_config):
+            # DASH attention keeps per-request routing state the generic
+            # runner's shared KV pool cannot hold.
+            from sglang.srt.hardware_backend.mlx.uocr_v2_runner import (
+                MlxUocrV2ModelRunner,
+            )
+
+            runner_cls = MlxUocrV2ModelRunner
+            init_kwargs["context_len"] = self.model_config.context_len
+        self._mlx_runner = runner_cls(**init_kwargs)
 
         self._model_runner = MlxModelRunnerStub(
             model_config=self.model_config,
@@ -309,16 +320,52 @@ class MlxTpModelWorker(TpModelWorker):
             token_ids=tuple(rows.get(rid, (0, None))[1] for rid in rids),
         )
 
+    def supports_native_custom_logit_processor(self, batch: ScheduleBatch) -> bool:
+        """Whether the MLX runner applies ``batch``'s custom logit processors itself."""
+        return self._mlx_runner.supports_native_custom_logit_processor(batch)
+
+    def create_uocr_runtime(self, *, tree_cache):
+        """Unlimited-OCR v2 document runtime over the MLX runner's request caches.
+
+        No side stream encodes ahead and crops are not staged for a device
+        copy; document windows reuse KV through the runner's backend.
+        """
+        from sglang.srt.hardware_backend.mlx.uocr_v2_doc_reuse import MlxDocReuse
+        from sglang.srt.models.unlimited_ocr_v2_support.crop_transfer import (
+            UnlimitedOcrCropTransfer,
+        )
+        from sglang.srt.models.unlimited_ocr_v2_support.scheduler_runtime import (
+            UocrSchedulerRuntime,
+        )
+
+        crop_transfer = UnlimitedOcrCropTransfer(model_dtype=torch.bfloat16)
+        crop_transfer.close()
+        return UocrSchedulerRuntime(
+            tree_cache=tree_cache,
+            crop_transfer=crop_transfer,
+            enable_overlap=False,
+            attn_backend=self._mlx_runner.doc_reuse_backend,
+            early_embeddings=None,
+            device=torch.device("cpu"),
+            forward_stream=None,
+            tp_size=1,
+            decode_graph_io=lambda: None,
+            doc_reuse_cls=MlxDocReuse,
+        )
+
     def _custom_logits_hook(self, batch: ScheduleBatch):
         """CPU edit hook for custom logit processors, or None.
 
         Only built for fresh pure-decode launches; the runner materializes
-        the logits for the hook, so these batches never chain.
+        the logits for the hook, so these batches never chain. None as well
+        when the runner applies the processors on the device.
         """
         if not (
             self._sampling_active(batch)
             and batch.sampling_info.has_custom_logit_processor
         ):
+            return None
+        if self.supports_native_custom_logit_processor(batch):
             return None
         sinfo = batch.sampling_info
 

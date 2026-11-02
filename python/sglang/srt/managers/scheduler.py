@@ -2567,6 +2567,12 @@ class Scheduler(
         """Initialize Unlimited-OCR v2 split-document KV reuse and prefetch."""
         if not is_unlimited_ocr_v2(self.model_config.hf_config):
             return
+        if use_mlx():
+            # The MLX runner, not a Torch model, owns the KV the windows reuse.
+            self.uocr_runtime = self.tp_worker.create_uocr_runtime(
+                tree_cache=self.tree_cache
+            )
+            return
         runner = self._target_model_runner()
         self.uocr_runtime = UocrSchedulerRuntime(
             tree_cache=self.tree_cache,

@@ -29,6 +29,13 @@ class TestMlxQuantizationOverride(unittest.TestCase):
         )
         self.assertEqual(result, "mlx_q4")
 
+    def test_mlx_q6_dict_config_autodetect(self):
+        """Bare {group_size, bits=6} dict (mlx-vlm adds mode) maps to mlx_q6."""
+        result = MlxQuantizationConfig.override_quantization_method(
+            {"group_size": 64, "bits": 6, "mode": "affine"}, None
+        )
+        self.assertEqual(result, "mlx_q6")
+
     def test_mlx_q8_dict_config_autodetect(self):
         """Bare {group_size, bits=8} dict maps to mlx_q8."""
         result = MlxQuantizationConfig.override_quantization_method(

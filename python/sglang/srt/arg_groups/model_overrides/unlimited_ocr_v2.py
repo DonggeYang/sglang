@@ -7,6 +7,7 @@ import logging
 from typing import Any, Dict
 
 from sglang.srt.arg_groups.model_override_base import _register_for, resolving_view
+from sglang.srt.hardware_backend.mlx.runtime import use_mlx
 from sglang.srt.runtime_context import attn_dp_enabled_of
 
 logger = logging.getLogger(__name__)
@@ -39,13 +40,11 @@ def _reject_unsupported_serving_modes(cfg: Any) -> None:
         )
 
 
-@_register_for("UnlimitedOCRV2ForCausalLM")
-def _unlimited_ocr_v2_overrides(server_args: Any, hf_config: Any) -> dict:
+def _paged_attention_overrides(cfg: Any, hf_config: Any) -> Dict[str, Any]:
+    """Page size and attention backend of the Torch DASH backend."""
     # Deferred to avoid a module import cycle.
     from sglang.srt.configs.model_config import get_unlimited_ocr_v2_sparse_config
 
-    cfg = resolving_view(server_args)
-    _reject_unsupported_serving_modes(cfg)
     sparse_cfg = get_unlimited_ocr_v2_sparse_config(hf_config)
     block_size = int(sparse_cfg["sparse_block_size"])
     overrides: Dict[str, Any] = {}
@@ -74,6 +73,16 @@ def _unlimited_ocr_v2_overrides(server_args: Any, hf_config: Any) -> dict:
             )
     if cfg.attention_backend is None:
         overrides["attention_backend"] = "unlimited_ocr_v2"
+    return overrides
+
+
+@_register_for("UnlimitedOCRV2ForCausalLM")
+def _unlimited_ocr_v2_overrides(server_args: Any, hf_config: Any) -> dict:
+    cfg = resolving_view(server_args)
+    _reject_unsupported_serving_modes(cfg)
+    # The MLX runner keeps the DASH state per request, with no paged KV pool
+    # and no attention backend.
+    overrides = {} if use_mlx() else _paged_attention_overrides(cfg, hf_config)
 
     if not cfg.disable_radix_cache:
         logger.warning(

@@ -14,6 +14,7 @@ from sglang.srt.arg_groups.model_override_base import (
 )
 from sglang.srt.arg_groups.overrides import declare_resolution
 from sglang.srt.connector import ConnectorType
+from sglang.srt.hardware_backend.mlx.runtime import use_mlx
 from sglang.srt.model_executor.cuda_graph_config import (
     ALLOWED_BACKENDS_PER_PHASE,
     Backend,
@@ -395,8 +396,11 @@ def apply_unlimited_ocr_v2_cuda_graph_default(server_args: Any):
     Runs before CUDA graph parsing; prefill block-table width varies per request.
     """
     cfg = resolving_view(server_args)
-    if cfg.disable_cuda_graph or parse_connector_type(cfg.model_path) == (
-        ConnectorType.INSTANCE
+    if (
+        cfg.disable_cuda_graph
+        # The MLX runner never captures CUDA graphs; skip the opt-in warning.
+        or use_mlx()
+        or parse_connector_type(cfg.model_path) == ConnectorType.INSTANCE
     ):
         return
     from sglang.srt.configs.model_config import UNLIMITED_OCR_V2_ARCH

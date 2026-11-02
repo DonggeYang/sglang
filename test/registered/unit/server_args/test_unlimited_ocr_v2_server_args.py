@@ -1,6 +1,7 @@
 """Unlimited-OCR v2 server-argument validation."""
 
 import unittest
+from unittest.mock import patch
 
 from sglang.srt.arg_groups.overrides import collect_model_override_declarations
 from sglang.srt.configs.model_config import UNLIMITED_OCR_V2_ARCH
@@ -84,6 +85,16 @@ class TestUnsupportedServingModes(CustomTestCase):
             with self.subTest(mode=mode):
                 with self.assertRaisesRegex(ValueError, "PD disaggregation"):
                     _declared_overrides(disaggregation_mode=mode)
+
+    def test_mlx_keeps_only_the_radix_override(self):
+        """The MLX runner has no paged KV pool or attention backend to pin."""
+        with patch(
+            "sglang.srt.arg_groups.model_overrides.unlimited_ocr_v2.use_mlx",
+            return_value=True,
+        ):
+            self.assertEqual(_declared_overrides(), {"disable_radix_cache": True})
+            with self.assertRaisesRegex(ValueError, "speculative decoding"):
+                _declared_overrides(speculative_algorithm="NGRAM")
 
 
 if __name__ == "__main__":

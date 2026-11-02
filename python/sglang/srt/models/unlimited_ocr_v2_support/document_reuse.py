@@ -508,7 +508,7 @@ def forced_len(req: Req) -> int:
     return 0 if req.uocr_doc is None else req.uocr_doc.forced_len
 
 
-def _page_base(req) -> int:
+def page_base(req) -> int:
     """RoPE page offset of this window: window-local page id + base == global.
 
     A recomputed window numbers its own pages 1..n, so its base is ``lo``. A
@@ -732,6 +732,22 @@ class DocReuse:
         # req_pool_idx -> token the next decode step must read instead.
         self._input_overrides: Dict[int, int] = {}
 
+    @staticmethod
+    def backend_for(attn_backend) -> Optional[UnlimitedOCRV2AttnBackend]:
+        """The attention backend reuse runs on, or None if it cannot run reuse."""
+        from sglang.srt.layers.attention.unlimited_ocr_v2_backend import (
+            UnlimitedOCRV2AttnBackend,
+        )
+
+        if isinstance(attn_backend, UnlimitedOCRV2AttnBackend):
+            return attn_backend
+        logger.warning(
+            "[Unlimited-OCR v2] attention backend %s cannot run document KV reuse; "
+            "every window recomputes",
+            type(attn_backend).__name__,
+        )
+        return None
+
     # -- Queued GPU work --
 
     def _enqueue(self, owner: Optional[str], op: Callable[[Any], None]) -> None:
@@ -784,7 +800,7 @@ class DocReuse:
         if any(row is None for row in rows):
             return
         lens = [len(r.origin_input_ids) for r in batch.reqs]
-        bases = [_page_base(r) for r in batch.reqs]
+        bases = [page_base(r) for r in batch.reqs]
         dev = b.device
         b.note_prompt_lens(
             torch.tensor(rows, dtype=torch.int64).to(dev, non_blocking=True),
@@ -1122,7 +1138,7 @@ class DocReuse:
             return False
 
         cache = self._cache
-        committed = req.kv.kv_committed_len
+        committed = self._committed_len(req)
         holder = RetainedWindow()
         holder.kv = req.detach_kv()
         # release_kv_cache stops once the row is claimed, so the request's tree
@@ -1157,11 +1173,22 @@ class DocReuse:
             next_page=next_page,
             lookahead=lookahead,
         )
-        self._trim_to_tails(entry)
+        if not self._keep_tails(entry, req, committed):
+            self._free_entry(entry)
+            return True
         old = self.docs.pop(cp[KEY_DOC_ID], None)
         if old is not None:
             self._free_entry(old)
         self.docs[cp[KEY_DOC_ID]] = entry
+        return True
+
+    def _committed_len(self, req: Req) -> int:
+        """Positions of the finished window that hold KV."""
+        return req.kv.kv_committed_len
+
+    def _keep_tails(self, entry: DocEntry, req: Req, committed: int) -> bool:
+        """Keep the KV the follow-up reads; False drops the whole window."""
+        self._trim_to_tails(entry)
         return True
 
     def _trim_to_tails(self, entry: DocEntry) -> None:
@@ -1253,7 +1280,7 @@ class DocReuse:
         page_id = b.page_state.page_token_id
         image_id = b.page_state.image_token_id
         bs = b.block_size
-        if page_id is None or cache.page_size != bs:
+        if page_id is None or not self._reusable(entry):
             return None
         if entry.next_page != page_base:
             # A window in between was aborted: the tail belongs to another page,
@@ -1296,6 +1323,12 @@ class DocReuse:
         # The copied KV can still predict EOS where that window stopped; the
         # forced marker moves decode off it.
         forced = text[1] + [page_id]
+        if not self._covers(entry, plan, text):
+            logger.info(
+                "[Unlimited-OCR v2] %s: retained rows miss the copy; recomputing",
+                req.rid,
+            )
+            return None
 
         alloc = self._alloc_prefix_slots(plan.copy_len, bs)
         if alloc is None:
@@ -1339,6 +1372,16 @@ class DocReuse:
             best_match_node=root,
             cache_protected_len=0,
         )
+
+    def _reusable(self, entry: DocEntry) -> bool:
+        """Whether ``entry``'s KV can seed a follow-up: one KV page per DASH block."""
+        return self._cache.page_size == self._backend.block_size
+
+    def _covers(
+        self, entry: DocEntry, plan: TailCopyPlan, text: Tuple[int, List[int]]
+    ) -> bool:
+        """Whether ``entry`` kept every position the copy and the text splice read."""
+        return True
 
     def _alloc_prefix_slots(self, copy_len: int, bs: int) -> Optional[torch.Tensor]:
         """Allocate whole pages for the copied prefix, evicting retained windows."""

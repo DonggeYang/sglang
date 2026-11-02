@@ -77,7 +77,8 @@ class SchedulerMlxOverlapMixin:
 
         Grammar vocab masks and custom logit processors depend on the
         previous token being materialized; a chained step is built before
-        that, so those batches launch fresh every step.
+        that, so those batches launch fresh every step unless the runner
+        executes the custom logit processor natively on the device.
         """
         if not get_device().mlx_enable_sampling:
             return True
@@ -86,7 +87,12 @@ class SchedulerMlxOverlapMixin:
             return True
         # batch.has_grammar, not sampling_info.grammars: the latter is only
         # populated at forward launch (see _build_logit_edit_rows).
-        return not (batch.has_grammar or sampling_info.has_custom_logit_processor)
+        if batch.has_grammar:
+            return False
+        return not (
+            sampling_info.has_custom_logit_processor
+            and not self.tp_worker.supports_native_custom_logit_processor(batch)
+        )
 
     def _prepare_mlx_launch(self: Scheduler, batch: ScheduleBatch):
         """Stamp scheduler bookkeeping before an MLX forward is launched."""
@@ -163,6 +169,10 @@ class SchedulerMlxOverlapMixin:
             # dereferences a None input_ids.
             resolve_forward_inputs(batch, self.future_map)
             launch = self.tp_worker.async_forward_batch_generation_mlx(batch)
+            # Document KV reuse: splice the overlap text before the next batch
+            # is built from this one (same point as Scheduler.run_batch).
+            if self.uocr_runtime is not None:
+                self.uocr_runtime.after_forward(batch, chunked_req=self.chunked_req)
             extend_input_len_per_req = None
             extend_logprob_start_len_per_req = None
             if batch.return_logprob:
