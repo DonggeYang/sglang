@@ -4,7 +4,7 @@ DASH maps each sparse block to one KV page, whose counters radix reuse loses.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from sglang.srt.arg_groups.model_override_base import _register_for, resolving_view
 from sglang.srt.arg_groups.overrides import declare_resolution
@@ -107,7 +107,7 @@ _MPS_MIB_PER_EXTRA_WINDOW = 8 * 1024
 _MPS_MAX_DEFAULT_WINDOWS = 8
 
 
-def _mps_window_budget(gpu_mem_mib: Any) -> int:
+def _mps_window_budget(gpu_mem_mib: Optional[float]) -> int:
     if gpu_mem_mib is None or gpu_mem_mib <= _MPS_BASE_WORKING_SET_MIB:
         return 1
     extra = int(gpu_mem_mib - _MPS_BASE_WORKING_SET_MIB) // _MPS_MIB_PER_EXTRA_WINDOW
@@ -132,8 +132,9 @@ def apply_unlimited_ocr_v2_mps_defaults(server_args: Any) -> None:
                 gpu_mem_mib = None
             windows = _mps_window_budget(gpu_mem_mib)
             window_tokens = doc_cfg.default_context_length()
-            # Plus one prefill chunk for the retained tail a follow-up copies;
-            # handle_gpu_memory_settings has resolved the chunk size by now.
+            # Plus one prefill chunk for the retained tail a follow-up copies.
+            # handle_gpu_memory_settings has resolved the chunk size by now;
+            # 2048, its smallest default, also covers chunking turned off (-1).
             chunk = max(cfg.chunked_prefill_size or 0, 2048)
             per_window = (
                 (window_tokens + chunk + page_size - 1) // page_size * page_size
