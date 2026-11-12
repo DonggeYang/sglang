@@ -90,9 +90,12 @@ class TestUnlimitedOcrV2TorchMps(CustomTestCase):
     def test_mps_defaults_cap_the_kv_pool_and_warm_up(self):
         info = requests.get(f"{self.base_url}/server_info", timeout=30).json()
         self.assertEqual(info["warmups"], "unlimited_ocr_v2")
-        # A whole number of 15,168-token windows (one page, 8000 page tokens).
+        # A whole number of windows: the one-page context with 8000 page tokens
+        # (13,092 tokens) plus one prefill chunk, page-aligned (15,168 on a
+        # 16 GB Mac).
+        window = 13120 + max(info["chunked_prefill_size"], 2048)
         self.assertGreater(info["max_total_tokens"], 0)
-        self.assertEqual(info["max_total_tokens"] % 15168, 0)
+        self.assertEqual(info["max_total_tokens"] % window, 0)
 
     def _ocr(self, titles: list[str]) -> str:
         content = [

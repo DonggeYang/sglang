@@ -191,8 +191,10 @@ async def unlimited_ocr_v2(
     """Run a one-page and a two-page gundam document and a two-page base one.
 
     The first image request otherwise pays one-time costs in the vision
-    encoder and decoder (graph compiles, kernel builds); on an Apple M5 that
-    made a fresh server's first one-page TTFT 3.2-9.2 s instead of 1.7 s.
+    encoder and decoder (graph compiles, kernel builds). On an Apple M5 a fresh
+    server's first one-page request had a TTFT of 2.7-8.5 s against 0.45 s for
+    the next one; after the warmup it is 1.6-1.8 s, as a page of another size
+    still builds its own graphs once.
     """
     for mode, titles in (
         ("gundam", ["Warmup"]),
