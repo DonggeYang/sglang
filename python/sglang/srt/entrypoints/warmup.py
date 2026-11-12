@@ -188,11 +188,11 @@ def _drawn_page(title: str) -> str:
 async def unlimited_ocr_v2(
     disaggregation_mode: str, tokenizer_manager: TokenizerManager
 ):
-    """Run a one-page gundam and a two-page base document through the model.
+    """Run a one-page and a two-page gundam document and a two-page base one.
 
     The first image request otherwise pays one-time costs in the vision
-    encoder and decoder (graph compiles, kernel builds); on Apple MPS that
-    made the first request's TTFT 10-18 s instead of about 1 s.
+    encoder and decoder (graph compiles, kernel builds); on an Apple M5 that
+    made a fresh server's first one-page TTFT 3.2-9.2 s instead of 1.7 s.
     """
     for mode, titles in (
         ("gundam", ["Warmup"]),

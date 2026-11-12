@@ -128,12 +128,16 @@ def apply_unlimited_ocr_v2_mps_defaults(server_args: Any) -> None:
             page_size = int(cfg.page_size or 32)
             try:
                 gpu_mem_mib = get_device_memory_capacity("mps")
-            except Exception:
+            except (RuntimeError, ValueError):
                 gpu_mem_mib = None
             windows = _mps_window_budget(gpu_mem_mib)
             window_tokens = doc_cfg.default_context_length()
-            # Plus one prefill chunk for the retained tail a follow-up copies.
-            per_window = (window_tokens + 2048 + page_size - 1) // page_size * page_size
+            # Plus one prefill chunk for the retained tail a follow-up copies;
+            # handle_gpu_memory_settings has resolved the chunk size by now.
+            chunk = max(cfg.chunked_prefill_size or 0, 2048)
+            per_window = (
+                (window_tokens + chunk + page_size - 1) // page_size * page_size
+            )
             updates["max_total_tokens"] = windows * per_window
     if updates:
         declare_resolution(
